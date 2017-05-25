@@ -1,5 +1,6 @@
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.functions.{col, sum, udf}
+import org.apache.spark.sql.functions.{col, trim, udf, sum}
+
 import scala.math._
 
 /**
@@ -8,11 +9,11 @@ import scala.math._
 object CoordinateDistanceDF {
   var R = 6372800 //meter
   def main(args: Array[String]): Unit ={
-    val spark = SparkSession.builder().appName("DF_CoordinateDistance").getOrCreate()
+    val spark = SparkSession.builder().appName("DF_CoordinateDistance").config("spark.sql.broadcastTimeout", 36000).getOrCreate()
 
-    val defaultDf = spark.read.option("header", "false").option("delimiter","|").csv(args(0)).distinct().select(col("*"))
-    val sideDf = spark.read.option("header", "false").option("delimiter","|").csv(args(1)).distinct()
-      .select(col("_c2"), col("_c4"), col("_c6"), col("_c8"), col("_c13"), col("_c28").alias("lat2"), col("_c29").alias("lon2"), col("_c36")).limit(10000)
+    val defaultDf = spark.read.option("header", "false").option("delimiter","|").csv(args(0)).distinct().select(col("*")).na.fill("")
+    val sideDf = spark.read.option("header", "false").option("delimiter","|").csv(args(1)).distinct().na.fill("")
+      .select(col("_c2"), col("_c4"), col("_c5"), col("_c6"), col("_c8"), col("_c13"), trim(col("_c28")).alias("lat2"), trim(col("_c29")).alias("lon2"), col("_c36")).limit(10000)
     //    df.select(df.columns(2), df.columns(4), df.columns(6), df.columns(8), df.columns(13), df.columns(28), df.columns(29), df.columns(36)).show(100)
 
     val haversine = udf((dmsLat:String, dmsLon:String, dmsLat2:String, dmsLon2:String) =>
@@ -36,18 +37,34 @@ object CoordinateDistanceDF {
     )
 
     val productDf = defaultDf.alias("df").crossJoin(sideDf.alias("df2")).select(
-      col("df._c2"), col("df._c4"), col("df._c6"), col("df._c8"), col("df._c13"), col("df._c36"), col("df._c28"), col("df._c29"), col("df2.lat2"), col("df2.lon2"))
+      col("df._c2"), col("df._c4"), col("df._c5"), col("df._c6"), col("df._c8"), col("df._c13"), col("df._c36"), col("df._c28"), col("df._c29"), col("df2.lat2"), col("df2.lon2"))
       .withColumn("_c99", haversine(col("df._c28"), col("df._c29"), col("df2.lat2"), col("df2.lon2")))
-    //    df4.show(100)
 
-    val joinDf = defaultDf.alias("df").join(productDf.alias("df3"), col("df._c2") === col("df3._c2") && col("df._c4") === col("df3._c4") && col("df._c6") === col("df3._c6") && col("df._c8") === col("df3._c8") && col("df._c13") === col("df3._c13") && col("df._c36") === col("df3._c36"), "left_outer")
-      .filter(col("_c99").isNotNull)
-      .select(col("df.*"), col("df3.lat2"), col("df3.lon2"), col("df3._c99"))
 
-    println(joinDf.count())
+    val addFlag = udf((sumVal:Int) => {
+      if(sumVal > 0) "Y"
+      else "N"
+    })
 
-    val aggrDf = joinDf.groupBy(col("_c2"), col("_c4"), col("_c6"), col("_c8"), col("_c13"), col("_c36")).agg(sum("_c99"))
+    val aggrDf = productDf.groupBy("_c2", "_c4", "_c5", "_c6", "_c8", "_c13", "_c36").agg(sum("_c99").alias("_c99")).withColumn("_flag", addFlag(col("_c99"))).drop("_c99")
 
-    aggrDf.write.format("com.databricks.spark.csv").save("file:///home/hadoop/ykoh/result/result.csv")
+    val joinDf = defaultDf.alias("df").join(aggrDf.alias("df3"), Seq("_c2", "_c4", "_c5", "_c6", "_c8", "_c13", "_c36"), "left_outer")
+    joinDf.write.format("com.databricks.spark.csv").save("/home/hadoop/ykoh/result")
+
+    /*
+    val joinDf = defaultDf.alias("df").join(productDf.alias("df3"), col("df._c2") === col("df3._c2") && col("df._c4") === col("df3._c4") && col("df._c5") === col("df3._c5") && col("df._c6") === col("df3._c6") && col("df._c8") === col("df3._c8") && col("df._c13") === col("df3._c13") && col("df._c36") === col("df3._c36"), "left_outer")
+      .select(col("df.*"), col("df3._c99"))
+
+    val addFlag = udf((sumVal:Int) => {
+      if(sumVal > 0) "Y"
+      else "N"
+    })
+    val aggrDf = joinDf.alias("joinDf")
+      .groupBy("_c2", "_c4", "_c5", "_c6", "_c8", "_c13", "_c36").agg(sum("_c99").alias("_c99")).withColumn("_flag", addFlag(col("_c99"))).drop("_c99")
+    //        println("aggrDf count : " + aggrDf.count())
+
+    aggrDf.write.format("com.databricks.spark.csv").save("/home/hadoop/ykoh/result")
+*/
+
   }
 }
