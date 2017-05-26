@@ -9,7 +9,7 @@ import scala.math._
 object CoordinateDistanceDF {
   var R = 6372800 //meter
   def main(args: Array[String]): Unit ={
-    val spark = SparkSession.builder().appName("DF_CoordinateDistance").config("spark.sql.broadcastTimeout", 36000).getOrCreate()
+    val spark = SparkSession.builder().appName("CoordinateDistance").config("spark.sql.broadcastTimeout", 3600).getOrCreate()
 
     val defaultDf = spark.read.option("header", "false").option("delimiter","|").csv(args(0)).distinct().select(col("*")).na.fill("")
     val sideDf = spark.read.option("header", "false").option("delimiter","|").csv(args(1)).distinct().na.fill("")
